@@ -1,0 +1,117 @@
+pip install --upgrade pip
+
+pip install langchain langchain-openai langchain-pinecone langchain-community openai pinecone-client python-dotenv pypdf
+
+pip install fastapi uvicorn gradio python-dotenv langchain-openai langchain-pinecone pinecone-client
+
+pip install fastapi uvicorn python-dotenv openai langchain-openai langchain-pinecone pinecone-client
+
+pip install fastapi uvicorn
+
+uvicorn app:app --reload
+
+
+
+---
+
+## 🚀 1. Create and Activate Virtual Environment
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate      # (on Windows)
+# source .venv/bin/activate # (on Mac/Linux)
+```
+
+---
+
+## 📦 2. Install and Upgrade Required Packages
+
+Run these **exact commands** (they ensure you have the latest compatible versions):
+
+```bash
+pip install --upgrade pip
+pip install --upgrade langchain langchain-community langchain-text-splitters langchain-openai langchain-pinecone pinecone-client python-dotenv pypdf
+```
+
+> 💡 `langchain-pinecone` is now a separate official package.
+> `pypdf` is needed for `PyPDFLoader`.
+
+---
+
+## 🔑 3. Set Up `.env` File
+
+Create a `.env` file in your project root (`rag_using_pinecone/.env`) with:
+
+```bash
+OPENAI_API_KEY=your_openai_api_key
+PINECONE_API_KEY=your_pinecone_api_key
+PINECONE_INDEX_NAME=my-rag-index
+```
+
+---
+
+## 📄 4. Project Structure
+
+Your folder should look like this:
+
+```
+rag_using_pinecone/
+│
+├── .env
+├── documents/
+│   └── python-notes.pdf
+├── main.py
+└── .venv/
+```
+
+---
+
+## ▶️ 5. Run the Script
+
+```bash
+python main.py
+```
+
+Expected output:
+
+```
+✅ Documents successfully stored in Pinecone!
+
+Result 1:
+<first chunk of matching content>
+
+Result 2:
+<next chunk...>
+```
+
+---
+
+## 🧹 (Optional) To Rebuild Index Manually
+
+If you ever want to recreate the Pinecone index:
+
+```bash
+python
+>>> from pinecone import Pinecone
+>>> pc = Pinecone(api_key="YOUR_KEY")
+>>> pc.delete_index("my-rag-index")
+```
+
+Then rerun `main.py`.
+
+---
+
+## ✅ Summary of Commands
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install --upgrade pip
+pip install --upgrade langchain langchain-community langchain-text-splitters langchain-openai langchain-pinecone pinecone-client python-dotenv pypdf
+python main.py
+```
+
+---
+
+Would you like me to also give you the **retrieval + Q&A** script next (to ask questions from the stored documents)?
+That’s the next natural step after ingestion.

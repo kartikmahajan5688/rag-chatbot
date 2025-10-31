@@ -1,0 +1,8 @@
+Python is a high-level programming language used for web development, data science, automation, and artificial intelligence.
+It has a large standard library and supports multiple programming paradigms, including object-oriented and functional programming.
+
+Some of the most popular Python frameworks include Django, Flask, and FastAPI for backend development.
+For data analysis, libraries like NumPy, Pandas, and Matplotlib are widely used.
+
+In AI and machine learning, Python is dominant because of frameworks such as TensorFlow, PyTorch, and Scikit-learn.
+It also integrates easily with APIs and external services, making it ideal for building AI applications.
