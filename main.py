@@ -8,7 +8,6 @@ from pinecone import Pinecone, ServerlessSpec
 
 # Load environment variables
 load_dotenv()
-
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
@@ -43,34 +42,36 @@ else:
         )
 
 
-# ---- 📄 Load PDF and TXT Documents ----
-pdf_loader = PyPDFLoader("./documents/python-notes.pdf")
-txt_loader = TextLoader("./documents/extra-notes.txt", encoding="utf-8")
+# ---- Function to Load + Embed Documents ----
+def ingest_documents(pdf_path=None, txt_path=None):
+    loaders = []
+    if pdf_path and os.path.exists(pdf_path):
+        loaders.append(PyPDFLoader(pdf_path))
+    if txt_path and os.path.exists(txt_path):
+        loaders.append(TextLoader(txt_path, encoding="utf-8"))
 
-pdf_docs = pdf_loader.load()
-txt_docs = txt_loader.load()
+    documents = []
+    for loader in loaders:
+        documents.extend(loader.load())
 
-# Combine both
-documents = pdf_docs + txt_docs
+    if not documents:
+        print("⚠️ No valid documents found.")
+        return
 
-# ---- ✂️ Split into Chunks ----
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-docs = splitter.split_documents(documents)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000, chunk_overlap=100)
+    chunks = splitter.split_documents(documents)
 
-# Create embeddings
-embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    vectorstore = PineconeVectorStore.from_documents(
+        chunks, embedding=embeddings, index_name=PINECONE_INDEX_NAME
+    )
 
-# Store in Pinecone
-vectorstore = PineconeVectorStore.from_documents(
-    docs,
-    embedding=embeddings,
-    index_name=PINECONE_INDEX_NAME,
-)
+    print("✅ Documents successfully embedded and stored in Pinecone!")
 
-print("✅ PDF + TXT documents successfully stored in Pinecone!")
 
-# Query test
-query = "What topics are covered in these documents?"
-results = vectorstore.similarity_search(query, k=3)
-for i, res in enumerate(results, 1):
-    print(f"\nResult {i}:\n{res.page_content[:300]}")
+if __name__ == "__main__":
+    ingest_documents(
+        pdf_path="./documents/python-notes.pdf",
+        txt_path="./documents/extra-notes.txt",
+    )

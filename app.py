@@ -2,12 +2,18 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pinecone import Pinecone
 import gradio as gr
 import uvicorn
+from langchain.prompts import PromptTemplate
+import hashlib
+
 
 # ---- Load environment variables ----
 load_dotenv()
@@ -15,11 +21,13 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 
+current_index_name = os.getenv("PINECONE_INDEX_NAME")  # default on startup
+
 # ---- Initialize Pinecone ----
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
 # ---- Initialize FastAPI ----
-app = FastAPI(title="📚 RAG Chatbot with FastAPI + Pinecone + Gradio")
+app = FastAPI(title="📚 RAG Chatbot with FastAPI + Gradio + Pinecone")
 
 # ---- Allow CORS for Gradio ----
 app.add_middleware(
@@ -35,143 +43,163 @@ embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 vectorstore = PineconeVectorStore(
     index_name=PINECONE_INDEX_NAME, embedding=embeddings)
 
-# ---- Chat Model ----
-llm = ChatOpenAI(
-    openai_api_key=OPENAI_API_KEY,
-    model="gpt-4o-mini",
-    temperature=0.3,
+# ---- Chat Model + Memory ----
+llm = ChatOpenAI(model="gpt-4o-mini",
+                 openai_api_key=OPENAI_API_KEY, temperature=0.3)
+memory = ConversationBufferMemory(
+    memory_key="chat_history", return_messages=True, output_key="answer"
 )
 
+# ---- Build Conversational Retrieval QA Chain ----
+qa_chain = ConversationalRetrievalChain.from_llm(
+    llm=llm,
+    retriever=vectorstore.as_retriever(search_kwargs={"k": 5}),
+    memory=memory,
+    return_source_documents=True,
+    verbose=True,
+)
 
-# ---- RAG Chat Function ----
-def rag_chat(message, history):
-    try:
-        # Retrieve top documents
-        results = vectorstore.similarity_search(message, k=3)
-        context = "\n\n".join([r.page_content for r in results])
-
-        # Construct the final prompt
-        prompt = f"""
-You are a helpful assistant. Use the following context to answer accurately.
-If the context is not relevant, say "I’m not sure based on the provided documents."
+QA_PROMPT = PromptTemplate.from_template("""
+You are an intelligent document assistant. Use ONLY the context provided below to answer.
+If the answer is not in the context, politely say you don’t know.
 
 Context:
 {context}
 
-User: {message}
-Assistant:
-"""
+Question: {question}
+""")
 
-        # Generate response
-        response = llm.invoke(prompt)
-        answer = response.content.strip()
+qa_chain.combine_docs_chain.llm_chain.prompt = QA_PROMPT
 
-        # ✅ IMPORTANT: Return only a string, not tuple/history
-        return answer
+# ---- Function: Handle document upload ----
+
+
+def upload_document(file):
+    global qa_chain, vectorstore, current_index_name, memory
+
+    try:
+        if file is None:
+            return "⚠️ Please upload a file first."
+
+        # Gradio gives a NamedString with .name pointing to temp path
+        temp_path = file.name
+        if not temp_path or not os.path.exists(temp_path):
+            return "⚠️ Could not locate uploaded file path."
+
+        # ---- Load the file ----
+        if temp_path.lower().endswith(".pdf"):
+            loader = PyPDFLoader(temp_path)
+        else:
+            loader = TextLoader(temp_path, encoding="utf-8")
+
+        docs = loader.load()
+        if not docs:
+            return "⚠️ No text found in the uploaded file."
+
+        # ---- Split into chunks ----
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=100)
+        chunks = splitter.split_documents(docs)
+
+        # ---- Create a valid Pinecone index name ----
+        base_name = os.path.splitext(os.path.basename(file.name))[0].lower()
+        # Replace invalid chars with '-'
+        sanitized_name = "".join(
+            c if c.isalnum() or c == "-" else "-" for c in base_name)
+        safe_hash = hashlib.sha1(base_name.encode()).hexdigest()[:8]
+        index_name = f"rag-{sanitized_name[:25]}-{safe_hash}"
+
+        # ---- Check existing indexes ----
+        existing = (
+            [i["name"] for i in pc.list_indexes()]
+            if isinstance(pc.list_indexes(), list)
+            else [i["name"] for i in pc.list_indexes().get("indexes", [])]
+        )
+
+        if index_name not in existing:
+            pc.create_index(
+                name=index_name,
+                dimension=1536,
+                metric="cosine",
+                spec={"serverless": {"cloud": "aws", "region": "us-east-1"}},
+            )
+
+        # ---- Upload embeddings ----
+        PineconeVectorStore.from_documents(
+            chunks, embedding=embeddings, index_name=index_name)
+
+        # ---- Update retriever & chain ----
+        current_index_name = index_name
+        vectorstore = PineconeVectorStore(
+            index_name=current_index_name, embedding=embeddings)
+
+        # Reset conversation memory for new file
+        memory = ConversationBufferMemory(
+            memory_key="chat_history", return_messages=True, output_key="answer")
+
+        qa_chain = ConversationalRetrievalChain.from_llm(
+            llm=llm,
+            retriever=vectorstore.as_retriever(search_kwargs={"k": 5}),
+            memory=memory,
+            return_source_documents=True,
+            verbose=True,
+        )
+
+        qa_chain.combine_docs_chain.llm_chain.prompt = QA_PROMPT
+
+        return f"✅ Uploaded and indexed '{file.name}' successfully! (index: {index_name})"
 
     except Exception as e:
-        return f"⚠️ Error: {str(e)}"
+        return f"⚠️ Error uploading file: {e}"
 
 
-# ---- Gradio Chat Interface ----
-chat_interface = gr.ChatInterface(
-    fn=rag_chat,
-    title="📚 AI Document Chatbot (RAG + Pinecone + OpenAI)",
-    description="Ask questions about your documents using Retrieval-Augmented Generation (RAG).",
-    examples=[
-        ["What topics are covered in the document?"],
-        ["Explain Python decorators from the document."],
-    ],
-)
+# ---- Function: Handle chat ----
+def chat_with_doc(message, history):
+    try:
+        # Ensure qa_chain exists
+        if qa_chain is None:
+            return "⚠️ QA chain not initialized."
+
+        # Invoke chain
+        result = qa_chain.invoke({"question": message})
+
+        # Debug - show which index / snippets were used
+        # The retriever will fetch from current_index_name now
+        src_docs = result.get("source_documents", [])
+        snippets = [d.page_content[:200].replace("\n", " ") for d in src_docs]
+        print("🔎 current_index_name:", current_index_name)
+        print("🔍 Retrieved snippets:", snippets)
+
+        return result.get("answer", "⚠️ No answer returned.")
+    except Exception as e:
+        return f"⚠️ Error: {e}"
 
 
-# ---- Mount Gradio App on FastAPI ----
-@app.get("/")
-def root():
-    return {"message": "🚀 FastAPI + Gradio RAG Chatbot is running!"}
+# ---- Gradio Interface ----
+with gr.Blocks(title="📚 AI Document Chatbot (RAG + Pinecone + OpenAI)") as demo:
+    gr.Markdown("### 📘 Upload your document and chat with it using AI!")
+
+    with gr.Row():
+        file_input = gr.File(label="Upload a PDF or Text file")
+        upload_button = gr.Button("📤 Process Document")
+
+    upload_output = gr.Textbox(label="Upload Status")
+
+    upload_button.click(upload_document, inputs=file_input,
+                        outputs=upload_output)
+
+    gr.Markdown("### 💬 Chat with your uploaded document")
+    chatbot = gr.ChatInterface(
+        fn=chat_with_doc,
+        title="Document Chatbot",
+        description="Ask questions about the uploaded document.",
+    )
 
 
-app = gr.mount_gradio_app(app, chat_interface, path="/gradio")
+# ---- Mount Gradio on FastAPI ----
+app = gr.mount_gradio_app(app, demo, path="/gradio")
 
 
+# ---- Run ----
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-# import os
-# from dotenv import load_dotenv
-# from fastapi import FastAPI
-# from pydantic import BaseModel
-# from openai import OpenAI
-# from langchain_openai import OpenAIEmbeddings
-# from langchain_pinecone import PineconeVectorStore
-# from pinecone import Pinecone
-
-# # ---- Load environment variables ----
-# load_dotenv()
-# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-# PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-
-# # ---- Initialize Clients ----
-# pc = Pinecone(api_key=PINECONE_API_KEY)
-# client = OpenAI(api_key=OPENAI_API_KEY)
-
-# # ---- Initialize Embeddings + Vector Store ----
-# embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-# vectorstore = PineconeVectorStore(
-#     index_name=PINECONE_INDEX_NAME,
-#     embedding=embeddings,
-# )
-
-# # ---- FastAPI App ----
-# app = FastAPI(title="RAG using FastAPI + Pinecone + OpenAI")
-
-# # ---- Request Schema ----
-
-
-# class QueryRequest(BaseModel):
-#     query: str
-#     top_k: int = 3
-
-
-# # ---- Root Endpoint ----
-# @app.get("/")
-# def home():
-#     return {"message": "🚀 FastAPI RAG API is running successfully!"}
-
-
-# # ---- RAG Endpoint ----
-# @app.post("/query")
-# def query_docs(request: QueryRequest):
-#     # Step 1: Retrieve top-k similar documents
-#     results = vectorstore.similarity_search(request.query, k=request.top_k)
-#     context = "\n\n".join([r.page_content for r in results])
-
-#     # Step 2: Build RAG prompt
-#     prompt = f"""
-# You are a knowledgeable AI assistant.
-# Use the following context from company documents to answer the question accurately.
-# If the answer cannot be found in the context, say "I’m not sure based on the available documents."
-
-# Context:
-# {context}
-
-# Question: {request.query}
-# Answer:
-# """
-
-#     # Step 3: Generate Answer with OpenAI
-#     completion = client.chat.completions.create(
-#         model="gpt-4o-mini",  # You can use gpt-4o or gpt-3.5-turbo
-#         messages=[{"role": "user", "content": prompt}],
-#     )
-
-#     answer = completion.choices[0].message.content.strip()
-
-#     # Step 4: Return the response
-#     return {
-#         "query": request.query,
-#         "answer": answer,
-#         "context_snippets": [r.page_content[:200] for r in results],
-#     }

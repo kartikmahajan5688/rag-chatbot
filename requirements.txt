@@ -1,8 +1,11 @@
 fastapi
-uvicorn
+uvicorn[standard]
+gradio
+python-dotenv
+pinecone-client
 langchain
 langchain-openai
 langchain-pinecone
-pinecone-client
-python-dotenv
-gradio
+langchain-community
+pypdf
+tiktoken
