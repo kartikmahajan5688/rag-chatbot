@@ -47,8 +47,8 @@
 ### 1️⃣ Clone the Repository
 
 ```bash
-git clone https://github.com/kartikmahajan5688/rag-chatbot.git
-cd ai-document-chatbot
+git clone https://github.com/kartikmahajan5688/ai-document-rag-chatbot.git
+cd ai-document-rag-chatbot
 ```
 
 ### 2️⃣ Create a Virtual Environment
@@ -150,8 +150,7 @@ If you deploy it (e.g., to Render or Railway), the Gradio UI mounts at `/gradio`
 
 ## 🧠 How It Works (Architecture)
 
-```mermaid
-flowchart TD
+```
 A[User Uploads Document] --> B[LangChain Loaders]
 B --> C[Text Splitter (Chunks)]
 C --> D[OpenAI Embeddings]
