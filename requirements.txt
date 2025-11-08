@@ -9,3 +9,8 @@ langchain-pinecone
 langchain-community
 pypdf
 tiktoken
+
+
+# uvicorn app:app --host 0.0.0.0 --port 8000
+
+# pip install fastapi uvicorn gradio python-dotenv openai langchain langchain-openai langchain-pinecone langchain-community pinecone-client pypdf
