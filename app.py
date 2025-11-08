@@ -74,11 +74,6 @@ qa_chain.combine_docs_chain.llm_chain.prompt = QA_PROMPT
 # ---- Function: Handle document upload ----
 
 
-print("qa_chain", qa_chain)
-print("vectorstore", vectorstore)
-print("current_index_name", current_index_name)
-
-
 def upload_document(file):
     global qa_chain, vectorstore, current_index_name, memory
 
